@@ -32,9 +32,17 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
+
+# Brand source kit — the app inlines the artwork it needs into
+# components/brand/Logo.tsx, and the folder carries desktop font licences.
+jatin-rane-brandkit/
+
+# Working copy of the resume; public/Jatin_Rane_Resume.docx is the served one.
+/Jatin_Rane_Resume.docx
 
 # typescript
 *.tsbuildinfo
