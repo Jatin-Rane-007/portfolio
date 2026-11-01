@@ -12,7 +12,7 @@ export const personal = {
   heroHeadline: ["MOBILE-FIRST.", "PRODUCTION-GRADE."],
   heroSubtitle:
     "Building production React Native and React applications that ship — real-time systems, compliance-critical flows, cross-platform experiences.",
-  email: "007jatinr@gmail.com",
+  email: "007rjatin@gmail.com",
   phone: "+91 91046 93114",
   phoneHref: "tel:+919104693114",
   location: "Nadiad, Gujarat, India",
