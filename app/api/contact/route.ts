@@ -1,16 +1,15 @@
-import { createTransport } from "nodemailer";
+import { Resend } from "resend";
 import { personal } from "@/data/portfolio";
 
 /**
- * Contact endpoint for the hero form. nodemailer opens a TCP socket, so this
- * needs the Node runtime — the Edge runtime has no net module to speak SMTP.
+ * Contact endpoint for the hero form. The send is one HTTPS call, so there is
+ * no outbound socket to plan a runtime around.
  */
-export const runtime = "nodejs";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Generous for a person, tight enough that a bot cannot use the form as a
- // mail-to-anyone relay through the site's own SMTP credentials.
+ // mail-to-anyone relay through the site's own email credentials.
 const LIMITS = { name: 120, email: 160, subject: 160, message: 6000 } as const;
 
 type Fields = { name: string; email: string; subject: string; message: string; company: string };
@@ -104,19 +103,20 @@ export async function POST(request: Request) {
     return json({ ok: false, error: "Too many messages from here. Try again shortly." }, 429);
   }
 
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
     // Deliberately not a hard failure: the client falls back to a mailto
     // composer, so the site still converts before credentials are wired up.
-    console.warn("[contact] SMTP not configured — message not sent");
+    console.warn("[contact] RESEND_API_KEY missing — message not sent");
     return json({ ok: false, error: "not_configured", configured: false }, 503);
   }
 
+  // Resend's shared test sender only delivers to the address registered on the
+  // account, which is exactly right for a contact form: the enquiry lands in
+  // Jatin's inbox and the visitor stays reachable through Reply-To. Point
+  // CONTACT_FROM at a sender on a verified domain once one exists.
   const to = process.env.CONTACT_TO || personal.email;
-  const port = Number(SMTP_PORT) || 465; // 465 = implicit TLS; 587 would be STARTTLS
-  // Gmail and most providers reject a From that is not the authenticated
-  // account, so the sender stays fixed and the visitor arrives via Reply-To.
-  const from = process.env.CONTACT_FROM || SMTP_USER;
+  const from = process.env.CONTACT_FROM || "Portfolio Contact <onboarding@resend.dev>";
 
   const subject = `[Portfolio] ${fields.subject || "Project inquiry"}`;
   const text = [
@@ -129,44 +129,32 @@ export async function POST(request: Request) {
     .filter(line => line !== null)
     .join("\n");
 
+  // Resend answers a rejected send with a returned error rather than throwing,
+  // so both shapes collapse into one failure before anything is reported.
+  let failure: { code?: string; message?: string } | null = null;
   try {
-    const transport = createTransport({
-      host: SMTP_HOST,
-      port,
-      secure: port === 465,
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
-    });
-
-    await transport.sendMail({
+    const { error } = await new Resend(apiKey).emails.send({
       from,
       to,
-      replyTo: fields.email,
       subject,
       text,
-      headers: { "X-Contact-Origin": "portfolio-contact-form" },
+      replyTo: fields.email,
     });
-    transport.close();
-  } catch (error) {
-    const err = error as {
-      responseCode?: number;
-      response?: string;
-      code?: string;
-      message?: string;
-    };
-    console.error("[contact] send failed:", err.responseCode, err.response, err.code, err.message);
-    // The server log is the primary source, but a one-line switch makes the
-    // reason visible from the browser's Network tab: set CONTACT_DEBUG to any
-    // value in Vercel env vars, redeploy, submit again, read `hint`, unset it.
-    // The reply text names the account and host, so it stays off by default.
-    const hint = process.env.CONTACT_DEBUG
-      ? String(
-          [err.responseCode, err.response, err.code, err.message]
-            .filter(Boolean)
-            .join(" ") || "unknown SMTP error",
-        ).slice(0, 300)
-      : undefined;
-    return json({ ok: false, error: "The message could not be sent.", hint }, 502);
+    if (error) failure = { code: error.name, message: error.message };
+  } catch (thrown) {
+    const err = thrown as { name?: string; message?: string };
+    failure = { code: err?.name, message: err?.message };
   }
 
-  return json({ ok: true }, 200);
+  if (!failure) return json({ ok: true }, 200);
+
+  console.error("[contact] send failed:", failure.code, failure.message);
+  // The server log is the primary source, but a one-line switch makes the
+  // reason visible from the browser's Network tab: set CONTACT_DEBUG to any
+  // value in Vercel env vars, redeploy, submit again, read `hint`, unset it.
+  // The message names the account, so it stays off by default.
+  const hint = process.env.CONTACT_DEBUG
+    ? `${failure.code ?? ""} ${failure.message ?? "unknown send error"}`.trim().slice(0, 300)
+    : undefined;
+  return json({ ok: false, error: "The message could not be sent.", hint }, 502);
 }
