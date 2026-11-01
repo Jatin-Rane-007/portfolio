@@ -147,8 +147,25 @@ export async function POST(request: Request) {
     });
     transport.close();
   } catch (error) {
-    console.error("[contact] send failed:", error);
-    return json({ ok: false, error: "The message could not be sent." }, 502);
+    const err = error as {
+      responseCode?: number;
+      response?: string;
+      code?: string;
+      message?: string;
+    };
+    console.error("[contact] send failed:", err.responseCode, err.response, err.code, err.message);
+    // The server log is the primary source, but a one-line switch makes the
+    // reason visible from the browser's Network tab: set CONTACT_DEBUG to any
+    // value in Vercel env vars, redeploy, submit again, read `hint`, unset it.
+    // The reply text names the account and host, so it stays off by default.
+    const hint = process.env.CONTACT_DEBUG
+      ? String(
+          [err.responseCode, err.response, err.code, err.message]
+            .filter(Boolean)
+            .join(" ") || "unknown SMTP error",
+        ).slice(0, 300)
+      : undefined;
+    return json({ ok: false, error: "The message could not be sent.", hint }, 502);
   }
 
   return json({ ok: true }, 200);
